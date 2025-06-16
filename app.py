@@ -1,4 +1,3 @@
-# pip install sqlitecloud flask flask-cors pandas statsmodels
 import traceback
 import time
 import queue
@@ -13,16 +12,13 @@ from statsmodels.tools.sm_exceptions import ValueWarning
 import sqlitecloud
 import logging
 
-# Suprimir warning de statsmodels sobre frecuencia de fechas
 warnings.filterwarnings('ignore', category=ValueWarning)
 
-# Configuración de logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# Configuración de la base de datos
 DATABASE_URL = "sqlitecloud://camb7islnz.g2.sqlite.cloud:8860/chinook.sqlite?apikey=XEWJ9eYCYVMAFvtxhvojT9lmZyZecL4lg3WzHZVTbks"
 
 app = Flask(__name__)
@@ -41,22 +37,18 @@ class SQLiteCloudPool:
     def get_connection(self):
         self.connection_attempts += 1
         try:
-            # Intentar obtener conexión del pool
             conn = self.pool.get_nowait()
-            # Verificar si la conexión está activa
             try:
                 conn.execute("SELECT 1")
                 self.successful_connections += 1
                 return conn
             except:
-                # Conexión muerta, cerrar y crear nueva
                 try:
                     conn.close()
                 except:
                     pass
                 return self._create_new_connection()
         except queue.Empty:
-            # No hay conexiones disponibles, crear nueva
             return self._create_new_connection()
     
     def _create_new_connection(self):
@@ -66,17 +58,14 @@ class SQLiteCloudPool:
     
     def return_connection(self, conn):
         try:
-            # Verificar si la conexión sigue activa antes de devolverla al pool
             conn.execute("SELECT 1")
             self.pool.put_nowait(conn)
         except queue.Full:
-            # Pool lleno, cerrar conexión
             try:
                 conn.close()
             except:
                 pass
         except:
-            # Conexión muerta, cerrarla
             try:
                 conn.close()
             except:
@@ -89,7 +78,6 @@ class SQLiteCloudPool:
             "success_rate": f"{(self.successful_connections/self.connection_attempts*100):.2f}%" if self.connection_attempts > 0 else "N/A"
         }
 
-# Crear pool global
 db_pool = SQLiteCloudPool(DATABASE_URL)
 
 def retry_db_operation(max_retries=3, delay=1):
@@ -129,7 +117,6 @@ def execute_query_safe(query, params=None):
         conn = db_pool.get_connection()
         cursor = conn.execute(query, params or [])
         
-        # Obtener resultados según el tipo de consulta
         if query.strip().upper().startswith('SELECT'):
             result = cursor.fetchall()
         else:
@@ -150,7 +137,6 @@ def predict_rain():
             ORDER BY timestamp ASC
         """
         
-        # Ejecutar consulta con reintentos automáticos
         rows = execute_query_safe(query)
         
         if not rows:
@@ -160,12 +146,10 @@ def predict_rain():
                 "prediction": []
             }), 404
 
-        # Procesar datos
         df = pd.DataFrame(rows, columns=["timestamp", "humidity", "pressure"])
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df.set_index("timestamp", inplace=True)
         
-        # Verificar que tenemos suficientes datos
         if len(df) < 10:
             return jsonify({
                 "error": "Insufficient data for prediction",
@@ -176,30 +160,23 @@ def predict_rain():
         y = df["humidity"]
         exog = df[["pressure"]]
         
-        # Especificar frecuencia para evitar warning de statsmodels
         if len(df) > 1:
-            # Intentar inferir frecuencia
             try:
                 df = df.asfreq(pd.infer_freq(df.index))
             except:
-                # Si no puede inferir, usar frecuencia horaria por defecto
                 df = df.asfreq('H')
                 y = df["humidity"].dropna()
                 exog = df[["pressure"]].dropna()
 
-        # Crear y ajustar modelo ARIMA
         model = ARIMA(y, exog=exog, order=(2, 1, 2))
         model_fit = model.fit()
 
-        # Realizar predicción
         future_exog = exog.tail(1).values.repeat(90, axis=0)
         forecast = model_fit.forecast(steps=90, exog=future_exog)
         prediction_list = forecast.tolist()
 
-        # Determinar si lloverá (humedad > 85%)
         will_rain = any(h > 85 for h in prediction_list)
         
-        # Estadísticas adicionales
         avg_humidity = sum(prediction_list) / len(prediction_list)
         max_humidity = max(prediction_list)
         min_humidity = min(prediction_list)
@@ -238,7 +215,6 @@ def predict_rain():
 def health_check():
     """Endpoint para verificar el estado de la aplicación"""
     try:
-        # Probar conexión a la base de datos
         result = execute_query_safe("SELECT 1 as test")
         db_status = "connected" if result else "disconnected"
         
@@ -304,13 +280,12 @@ def handle_exception(e):
     }), 500
 
 if __name__ == "__main__":
-    # Probar conexión inicial
     try:
         test_result = execute_query_safe("SELECT 1")
-        logging.info("✅ Conexión inicial exitosa a SQLite Cloud")
-        logging.info(f"✅ Resultado de prueba: {test_result}")
+        logging.info("Conexión exitosa a SQLite Cloud")
+        logging.info(f"Resultado de prueba: {test_result}")
     except Exception as e:
-        logging.error(f"❌ Error en conexión inicial: {str(e)}")
+        logging.error(f"Error en conexión inicial: {str(e)}")
         logging.error("La aplicación seguirá ejecutándose con reintentos automáticos")
     
     logging.info("🚀 Iniciando servidor Flask para ClimateSense...")
